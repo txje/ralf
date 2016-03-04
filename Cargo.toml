@@ -1,0 +1,11 @@
+[package]
+name = "rust_aln"
+version = "0.1.0"
+authors = ["Jeremy <jeremyrwang@gmail.com>"]
+
+[dependencies]
+bio = "*"
+log = "*"
+env_logger = "*"
+argparse = "*"
+docopt = "*"
