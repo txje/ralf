@@ -7,7 +7,7 @@ I maintain that Ralf is *not* an acronym, but you may remember it as Rust Aligne
 Ralf is my very first Rust program, so I welcome any and all input.
 
 
-Instal and Build
+Install and Build
 ================
 
 Rust must be installed to build from the source, see: https://www.rust-lang.org/
