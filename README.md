@@ -12,7 +12,7 @@ Install and Build
 
 Rust must be installed to build from the source, see: https://www.rust-lang.org/
 
-It has been tested on v1.7 Stable
+It has been tested using rustc 1.14.0
 
     git clone https://github.com/txje/ralf.git
     cd ralf

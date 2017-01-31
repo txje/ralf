@@ -14,7 +14,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use bio::alphabets;
-use bio::alphabets::dna::RevComp;
+use bio::alphabets::dna::*; // revcomp, complement
 use bio::io::fasta;
 use bio::alignment::pairwise::Aligner;
 use bio::alignment::AlignmentOperation;
@@ -26,12 +26,12 @@ struct Position {
   pos: u32
 }
 
-struct Match {
+struct KmerMatch {
   qpos: u32,
   tpos: u32
 }
 
-impl fmt::Display for Match {
+impl fmt::Display for KmerMatch {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "{}:{}", self.qpos, self.tpos)
   }
@@ -173,7 +173,6 @@ fn main() {
 fn aln_reads(read_fa:&str, ref_seqs:Vec<fasta::Record>, ref_hash:&mut HashMap<u64,Position>, args:&Args, fw_mod:u64, alphabet:&alphabets::Alphabet) {
 
   let reader = fasta::Reader::from_file(read_fa).unwrap();
-  let revcomp = RevComp::new(); // this can be used repeatedly
 
   for record in reader.records() {
 
@@ -184,7 +183,7 @@ fn aln_reads(read_fa:&str, ref_seqs:Vec<fasta::Record>, ref_hash:&mut HashMap<u6
       continue;
     }
 
-    let mut hit_hash:HashMap<u32,Vec<Match>> = HashMap::new();
+    let mut hit_hash:HashMap<u32,Vec<KmerMatch>> = HashMap::new();
 
     let mut kmer:u64 = 0;
     for i in 0..args.k-1 {
@@ -204,7 +203,7 @@ fn aln_reads(read_fa:&str, ref_seqs:Vec<fasta::Record>, ref_hash:&mut HashMap<u6
             hit_hash.insert(pos.rid, match_vec);
           }
           let mut match_vec = hit_hash.get_mut(&pos.rid).unwrap();
-          match_vec.push(Match{qpos:i as u32, tpos: pos.pos});
+          match_vec.push(KmerMatch{qpos:i as u32, tpos: pos.pos});
         },
         None => {}
       };
@@ -296,8 +295,8 @@ fn aln_reads(read_fa:&str, ref_seqs:Vec<fasta::Record>, ref_hash:&mut HashMap<u6
         let alignment = if !rev {
           aligner.global(&seq[matches[i-1].qpos as usize+args.k..matches[i].qpos as usize], &(ref_seqs[*rid as usize/2].seq())[matches[i-1].tpos as usize+args.k..matches[i].tpos as usize])
         } else {
-          let rc = revcomp.get(&seq[matches[i].qpos as usize+args.k..matches[i-1].qpos as usize]);
-          // RevComp.get() takes &[u8] and returns Vec<u8>, but I really need &[u8]
+          let rc = revcomp(&seq[matches[i].qpos as usize+args.k..matches[i-1].qpos as usize]);
+          // rc.get() takes &[u8] and returns Vec<u8>, but I really need &[u8]
           let rc = &rc[..]; // takes a slice from a Vec
           aligner.global(rc, &(ref_seqs[*rid as usize/2].seq())[matches[i-1].tpos as usize+args.k..matches[i].tpos as usize])
         };
@@ -328,8 +327,7 @@ fn aln_reads(read_fa:&str, ref_seqs:Vec<fasta::Record>, ref_hash:&mut HashMap<u6
  10  score numMatch numMismatch numIns numDel
  15  mapQV qAlignedSeq matchPattern tAlignedSeq
 */
-fn report (query:&fasta::Record, target:&fasta::Record, first_match:&Match, last_match:&Match, rev:bool, args:&Args, path:&Vec<AlignmentOperation>) {
-  let revcomp = RevComp::new(); // this can be used repeatedly
+fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, last_match:&KmerMatch, rev:bool, args:&Args, path:&Vec<AlignmentOperation>) {
 
   // it's probably NOT slow to have to get seq() only to find it's len
   // it should be returning a reference to a slice of the underlying string, so takes O(1) time
@@ -360,7 +358,7 @@ fn report (query:&fasta::Record, target:&fasta::Record, first_match:&Match, last
 
   for i in 0..path.len() {
     //trace!("path {}, q {}, t {}", i, q, t);
-    let qchar = if !rev {qseq[q]} else {revcomp.comp(qseq[q])} as char;
+    let qchar = if !rev {qseq[q]} else {complement(qseq[q])} as char;
     pattern.push(match path[i] {
       Match => {
         assert!(qchar == tseq[t] as char, "q{} {} != {} t{} at path {} should be a match {} {}", q, qchar, tseq[t] as char, t, i, qaln, taln);
@@ -431,9 +429,9 @@ fn report (query:&fasta::Record, target:&fasta::Record, first_match:&Match, last
 
 // longest increasing subsequence
 // a la https://en.wikipedia.org/wiki/Longest_increasing_subsequence
-fn lis(arr:&Vec<Match>) -> Vec<Match> {
+fn lis(arr:&Vec<KmerMatch>) -> Vec<KmerMatch> {
   // matches are already ordered by qpos
-  //let mut lis: Vec<Match> = Vec::new();
+  //let mut lis: Vec<KmerMatch> = Vec::new();
   let n = arr.len();
 
   // these need to act as fixed, variable-size arrays
@@ -477,11 +475,11 @@ fn lis(arr:&Vec<Match>) -> Vec<Match> {
   }
 
   // Reconstruct the longest increasing subsequence
-  let mut s:Vec<Match> = Vec::new();
+  let mut s:Vec<KmerMatch> = Vec::new();
   let mut k = m[l];
   if l > 1 {
     for _ in 0..l {
-      s.push(Match{qpos:arr[k].qpos, tpos:arr[k].tpos}); // poor man's clone
+      s.push(KmerMatch{qpos:arr[k].qpos, tpos:arr[k].tpos}); // poor man's clone
       k = p[k];
     }
   }
