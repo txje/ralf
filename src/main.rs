@@ -65,19 +65,6 @@ read_fa                    reads fasta file
 fn main() {
   easylog::init().unwrap();
   
-  /*
-  / Parameters:
-  /
-  / ref_fa               reference fasta file
-  / read_fa              reads fasta file
-  / k                    hash k-mer size
-  / min_ordered_matches  Minimum number of properly ordered hits required to report an alignment
-  / max_match_gap        Maximum gap between adjacent matches (in query sequence)
-  / max_offset_variance  Maximum difference between adjacent query and target match offsets, as
-  /                      a fraction of total offset
-  / min_allowable_offset Minimum difference to allow between adjacent query and target match offsets
-  / min_aln_len          Minimum reported alignment path
-  */
 
   let mut args = Args {
     k: 16,
@@ -96,13 +83,16 @@ fn main() {
   trace!("Setting k to {}", argk);
   args.k = match usize::from_str(argk) {
     Ok(argk) => argk,
-    Err(_) => panic!("Invalid value for -k, integer > 0 required")
+    Err(_) => {
+      warn!("Invalid value for -k, using default: 16");
+      args.k
+    }
   };
   let argm = arguments.get_str("-m");
   args.min_ordered_matches = match usize::from_str(argm) {
     Ok(argm) => argm,
     Err(_) => {
-      warn!("Invalid value for -m, ignoring");
+      warn!("Invalid value for -m, using default: 10");
       args.min_ordered_matches
     }
   };
@@ -110,7 +100,7 @@ fn main() {
   args.max_match_gap = match u32::from_str(argg) {
     Ok(argg) => argg,
     Err(_) => {
-      warn!("Invalid value for -g, ignoring");
+      warn!("Invalid value for -g, using default: 1000");
       args.max_match_gap
     }
   };
@@ -118,7 +108,7 @@ fn main() {
   args.max_offset_variance = match f32::from_str(mov) {
     Ok(mov) => mov,
     Err(_) => {
-      warn!("Invalid value for -x, ignoring");
+      warn!("Invalid value for -x, using default: 0.2");
       args.max_offset_variance
     }
   };
@@ -126,7 +116,7 @@ fn main() {
   args.min_allowable_offset = match u32::from_str(argo) {
     Ok(argo) => argo,
     Err(_) => {
-      warn!("Invalid value for -o, ignoring");
+      warn!("Invalid value for -o, using default: 50");
       args.min_allowable_offset
     }
   };
@@ -134,7 +124,7 @@ fn main() {
   args.min_aln_len = match usize::from_str(argl) {
     Ok(argl) => argl,
     Err(_) => {
-      warn!("Invalid value for -l, ignoring");
+      warn!("Invalid value for -l, using default: 100");
       args.min_aln_len
     }
   };
@@ -517,9 +507,6 @@ fn hash_ref(ref_fa:&str, ref_hash:&mut HashMap<u64,Position>, args:&Args, fw_mod
         }
 
         for i in 0..(seq.len()-args.k+1) {
-          if i % 10000 == 0 {
-            debug!("{} bp", i);
-          }
           kmer = (kmer << 2) + ((seq[i+args.k-1] >> 1) & 3) as u64;
           if args.k < 32 {
             kmer = kmer % fw_mod;
