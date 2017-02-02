@@ -14,11 +14,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use bio::alphabets;
-use bio::alphabets::dna::*; // revcomp, complement
 use bio::io::fasta;
-use bio::alignment::pairwise::Aligner;
-use bio::alignment::AlignmentOperation;
-use bio::alignment::AlignmentOperation::*; // enum: Match, Subst, Del, Ins
 
 
 struct Position {
@@ -42,7 +38,6 @@ struct Args {
   min_ordered_matches: usize,
   max_match_gap: u32,
   max_offset_variance: f32,
-  min_allowable_offset: u32,
   min_aln_len: usize,
 }
 
@@ -55,10 +50,8 @@ read_fa                    reads fasta file
 -k <k>                     K-mer size to use for hash matching (default: 16).
 -m <min_ordered_matches>   Minimum number of properly ordered hits required to report an alignment
 -g <max_match_gap>         Maximum gap between adjacent matches (in query sequence)
--x <max_offset_variance>   Maximum difference between adjacent query and target match offsets, as
-                           a fraction of total offset
--o <min_allowable_offset>  Minimum difference to allow between adjacent query and target match offsets
--l <min_aln_len>           Minimum reported alignment path
+-x <max_offset_variance>   Maximum proportional difference between adjacent query and target match offsets
+-l <min_aln_len>           Minimum reported alignment length
 ";
 
 
@@ -68,19 +61,18 @@ fn main() {
 
   let mut args = Args {
     k: 16,
-    min_ordered_matches: 10,
-    max_match_gap: 1000,
+    min_ordered_matches: 10, // at least 10 kmer hits
+    max_match_gap: 1000, // maximum gap between kmer hits on query, bp
     max_offset_variance: 0.2, // 20% offset variance allowed
-    min_allowable_offset: 50, // at least 50bp offset allowed at all times
-    min_aln_len: 100, // minimum reported alignment path
+    min_aln_len: 100, // minimum reported alignment path, bp
   };
 
   let arguments = Docopt::new(USAGE).and_then(|d| d.argv(std::env::args().into_iter()).parse()).unwrap_or_else(|e| e.exit());
 
   let ref_fa = arguments.get_str("<ref_fa>");
   let read_fa = arguments.get_str("<read_fa>");
+
   let argk = arguments.get_str("-k");
-  trace!("Setting k to {}", argk);
   args.k = match usize::from_str(argk) {
     Ok(argk) => argk,
     Err(_) => {
@@ -88,6 +80,7 @@ fn main() {
       args.k
     }
   };
+
   let argm = arguments.get_str("-m");
   args.min_ordered_matches = match usize::from_str(argm) {
     Ok(argm) => argm,
@@ -96,6 +89,7 @@ fn main() {
       args.min_ordered_matches
     }
   };
+
   let argg = arguments.get_str("-g");
   args.max_match_gap = match u32::from_str(argg) {
     Ok(argg) => argg,
@@ -104,6 +98,7 @@ fn main() {
       args.max_match_gap
     }
   };
+
   let mov = arguments.get_str("-x");
   args.max_offset_variance = match f32::from_str(mov) {
     Ok(mov) => mov,
@@ -112,14 +107,7 @@ fn main() {
       args.max_offset_variance
     }
   };
-  let argo = arguments.get_str("-o");
-  args.min_allowable_offset = match u32::from_str(argo) {
-    Ok(argo) => argo,
-    Err(_) => {
-      warn!("Invalid value for -o, using default: 50");
-      args.min_allowable_offset
-    }
-  };
+
   let argl = arguments.get_str("-l");
   args.min_aln_len = match usize::from_str(argl) {
     Ok(argl) => argl,
@@ -128,18 +116,6 @@ fn main() {
       args.min_aln_len
     }
   };
-
-/*
-  let mut parser = ArgumentParser::new();
-  parser.set_description("Query -> Reference FASTA aligner");
-  parser.refer(&mut args.k).add_option(&["-k"], Store, "K-mer size to use for hash matching, default 16");
-  parser.refer(&mut args.min_ordered_matches).add_option(&["-m", "--min_ordered_matches"], Store, "Minimum number of properly ordered hits to report an alignment, default 10");
-  parser.refer(&mut args.max_match_gap).add_option(&["-g", "--max_match_gap"], Store, "Maximum gap allowed between adjacent k-mer hits (in query sequence), default 1000");
-  parser.refer(&mut args.max_offset_variance).add_option(&["-x", "--max_offset_variance"], Store, "Maximum fractional variance between adjacent query and target match offsets, default 0.2");
-  parser.refer(&mut args.min_allowable_offset).add_option(&["-o", "--min_allowable_offset"], Store, "Minimum difference to allow between adjacent query and target match offsets, default 50");
-  parser.refer(&mut args.min_aln_len).add_option(&["-a", "--min_aln_len"], Store, "Minimum reported alignment query length, default 100");
-  parser.parse_args_or_exit();
-  */
 
 
   let alphabet = alphabets::dna::alphabet();
@@ -150,17 +126,17 @@ fn main() {
   // ideally the initial capacity will reflect the total # of unique k-mers
   // in practice, 2x the total reference genome size accounts for exclusively
   //   unique k-mers on both strands
-  let mut ref_hash:HashMap<u64,Position> = HashMap::with_capacity(10000000);
+  let mut ref_hash:HashMap<u64,Position> = HashMap::with_capacity(400000000);
 
   info!("Building reference hash from {}", ref_fa);
   let ref_seqs = hash_ref(&ref_fa[..], &mut ref_hash, &args, fw_mod, rev_shift, &alphabet);
 
-  info!("Aligning reads from {}", read_fa);
-  aln_reads(&read_fa[..], ref_seqs, &mut ref_hash, &args, fw_mod, &alphabet);
+  info!("Overlapping reads from {}", read_fa);
+  ovl_reads(&read_fa[..], ref_seqs, &mut ref_hash, &args, fw_mod, &alphabet);
 }
 
 
-fn aln_reads(read_fa:&str, ref_seqs:Vec<fasta::Record>, ref_hash:&mut HashMap<u64,Position>, args:&Args, fw_mod:u64, alphabet:&alphabets::Alphabet) {
+fn ovl_reads(read_fa:&str, ref_seqs:Vec<fasta::Record>, ref_hash:&mut HashMap<u64,Position>, args:&Args, fw_mod:u64, alphabet:&alphabets::Alphabet) {
 
   let reader = fasta::Reader::from_file(read_fa).unwrap();
 
@@ -208,116 +184,69 @@ fn aln_reads(read_fa:&str, ref_seqs:Vec<fasta::Record>, ref_hash:&mut HashMap<u6
         matches.reverse();
       }
 
-      // find longest increasing subset
-      let matches = lis(&matches);
-
-      // enforce minimum # of ordered matches, otherwise report no alignment
+      // don't bother if there aren't a minimum of matches to begin with
       if matches.len() < args.min_ordered_matches {
         continue;
       }
 
-      //debug!("qpos: {:?}", matches);
+      debug!("read {} ({} bp) hit ref {} ({}) {} times q{}:t{} -> q{}:t{}", record.id().unwrap(), seq.len(), rid/2, rid&1, matches.len(), matches[0].qpos, matches[0].tpos, matches[matches.len()-1].qpos, matches[matches.len()-1].tpos);
 
-      // compute alignment 5' of the first match
+      let mut m_start = 0;
 
-      // this is a vector of the AlignmentOperation enum: Match, Subst, Ins, Del
-      // initialize to a reasonably expected capacity for long read alignment:
-      //   length of query string + 20%
-      // this doesn't take into account extra alignment 5' and 3' of the terminal k-mer matches
-      let max_query_len = if rev {matches[0].qpos - matches[matches.len()-1].qpos} else {matches[matches.len()-1].qpos - matches[0].qpos};
-      let mut path:Vec<AlignmentOperation> = Vec::with_capacity((max_query_len as f32 * 1.2) as usize);
-
-      // first k-mer match
-      for _ in 0..args.k {
-        path.push(Match);
+      let mut best_st = 0;
+      let mut best_en = 0;
+      for i in 1..matches.len() {
+        let qdiff = if matches[i].qpos > matches[i-1].qpos {matches[i].qpos - matches[i-1].qpos} else {matches[i-1].qpos - matches[i].qpos};
+        let tdiff = if matches[i].tpos > matches[i-1].tpos {matches[i].tpos - matches[i-1].tpos} else {matches[i-1].tpos - matches[i].tpos};
+        if tdiff as f32 > qdiff as f32 * (1.0 + args.max_offset_variance)
+          || qdiff as f32 > tdiff as f32 * (1.0 + args.max_offset_variance) {
+          if i-m_start > best_en-best_st+1 {
+            best_st = m_start;
+            best_en = i-1;
+          }
+          m_start += 1;
+        }
       }
 
-      let mut m_start:usize = 0;
-
-      // compute DP alignment between matches
+      debug!("  best is {} hits from q{}-{}, t{}-{}", best_en-best_st+1, matches[best_st].qpos, matches[best_en].qpos, matches[best_st].tpos, matches[best_en].tpos);
+/*
       for i in 1..matches.len() {
 
         // enforce maximum offset variance between adjacent matches
-        //debug!("{}:{} -> {}:{}", matches[i-1].qpos, matches[i-1].tpos, matches[i].qpos, matches[i].tpos);
         let qdiff = if !rev {matches[i].qpos - matches[i-1].qpos} else {matches[i-1].qpos - matches[i].qpos};
 
         let tdiff = matches[i].tpos - matches[i-1].tpos;
         let (maxdiff,mindiff) = if qdiff > tdiff {(qdiff,tdiff)} else {(tdiff,qdiff)};
         let offset = maxdiff - mindiff;
-        if maxdiff > args.max_match_gap ||
-           (offset > args.min_allowable_offset && (offset as f32 > (mindiff as f32) * args.max_offset_variance)) {
-          if (if !rev {matches[i-1].qpos - matches[m_start].qpos + args.k as u32} else {matches[m_start].qpos - matches[i-1].qpos + args.k as u32}) >= args.min_aln_len as u32 {
-            report(&record, &ref_seqs[*rid as usize/2], &matches[m_start], &matches[i-1], rev, args, &path);
-          }
-          path.clear();
 
-          // k-mer match
-          for _ in 0..args.k {
-            path.push(Match);
+        // if this gap is too big
+        if maxdiff > args.max_match_gap || (offset as f32 > (mindiff as f32) * args.max_offset_variance) {
+          // if there are enough preceding matches, output them
+          if (if !rev {matches[i-1].qpos - matches[m_start].qpos + args.k as u32} else {matches[m_start].qpos - matches[i-1].qpos + args.k as u32}) >= args.min_aln_len as u32
+            && i-m_start >= args.min_ordered_matches {
+            report(&record, &ref_seqs[*rid as usize/2], &matches[m_start], &matches[i-1], i-m_start, rev, args);
           }
-
           m_start = i;
-          continue;
-        }
-
-        // if this k-mer match overlaps the previous for *either query or target, deal with it
-        if mindiff < args.k as u32 + 1 {
-          if tdiff > qdiff {
-            for _ in 0..tdiff-qdiff {
-              path.push(Del)
-            }
-          } else if qdiff > tdiff{
-            for _ in 0..qdiff-tdiff {
-              path.push(Ins)
-            }
-          }
-          for _ in 0..mindiff {
-            path.push(Match);
-          }
-          continue;
-        }
-
-        // inline (lambda?) scoring function: 1 if match, -1 if mismatch
-        let score = |a: u8, b: u8| if a == b {1i32} else {-1i32};
-        let gap_open = -1;
-        let gap_extend = -1;
-        let mut aligner = Aligner::with_capacity(qdiff as usize - args.k, tdiff as usize - args.k, gap_open, gap_extend, &score);
-        let alignment = if !rev {
-          aligner.global(&seq[matches[i-1].qpos as usize+args.k..matches[i].qpos as usize], &(ref_seqs[*rid as usize/2].seq())[matches[i-1].tpos as usize+args.k..matches[i].tpos as usize])
-        } else {
-          let rc = revcomp(&seq[matches[i].qpos as usize+args.k..matches[i-1].qpos as usize]);
-          // rc.get() takes &[u8] and returns Vec<u8>, but I really need &[u8]
-          let rc = &rc[..]; // takes a slice from a Vec
-          aligner.global(rc, &(ref_seqs[*rid as usize/2].seq())[matches[i-1].tpos as usize+args.k..matches[i].tpos as usize])
-        };
-        path.extend(alignment.operations);
-
-        // k-mer match
-        for _ in 0..args.k {
-          path.push(Match);
         }
       }
-
-      debug!("read {} ({} bp) hit ref {} ({}) {} times (LIS) q{}:t{} -> q{}:t{}", record.id().unwrap(), seq.len(), rid/2, rid&1, matches.len(), matches[0].qpos, matches[0].tpos, matches[matches.len()-1].qpos, matches[matches.len()-1].tpos);
 
       // report last match set
-      if path.len() >= args.min_aln_len {
-        report(&record, &ref_seqs[*rid as usize/2], &matches[m_start], &matches[matches.len()-1], rev, args, &path);
+      if (if !rev {matches[matches.len()-1].qpos - matches[m_start].qpos + args.k as u32} else {matches[m_start].qpos - matches[matches.len()-1].qpos + args.k as u32}) >= args.min_aln_len as u32
+        && matches.len()-m_start >= args.min_ordered_matches {
+        report(&record, &ref_seqs[*rid as usize/2], &matches[m_start], &matches[matches.len()-1], matches.len()-m_start, rev, args);
       }
-
-      // compute alignment 3' of the last match
+*/
     }
   }
 }
 
 /*
- m5 format:
+ format:
  0   qName qSeqLength qStart qEnd qStrand
  5   tName tSeqLength tStart tEnd tStrand
- 10  score numMatch numMismatch numIns numDel
- 15  mapQV qAlignedSeq matchPattern tAlignedSeq
+ 10  numKmerMatches
 */
-fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, last_match:&KmerMatch, rev:bool, args:&Args, path:&Vec<AlignmentOperation>) {
+fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, last_match:&KmerMatch, nmatches:usize, rev:bool, args:&Args) {
 
   // it's probably NOT slow to have to get seq() only to find it's len
   // it should be returning a reference to a slice of the underlying string, so takes O(1) time
@@ -336,84 +265,7 @@ fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, 
   print!("{} ", last_match.tpos + args.k as u32 - 1);
   print!("0 "); // target will always show fw strand
 
-  let (mut nmatch, mut nsubst, mut nins, mut ndel) = (0, 0, 0, 0);
-  let mut qaln = String::with_capacity(path.len()); // this should be *exactly the right size
-  let mut taln = String::with_capacity(path.len());
-  let mut pattern = String::with_capacity(path.len());
-  let mut q = if !rev {first_match.qpos as usize} else {first_match.qpos as usize + args.k - 1};
-  let mut t = first_match.tpos as usize;
-
-  let qseq = query.seq();
-  let tseq = target.seq();
-
-  for i in 0..path.len() {
-    //trace!("path {}, q {}, t {}", i, q, t);
-    let qchar = if !rev {qseq[q]} else {complement(qseq[q])} as char;
-    pattern.push(match path[i] {
-      Match => {
-        assert!(qchar == tseq[t] as char, "q{} {} != {} t{} at path {} should be a match {} {}", q, qchar, tseq[t] as char, t, i, qaln, taln);
-        nmatch += 1;
-        qaln.push(qchar);
-        if !rev {
-          q += 1;
-        } else if i < path.len()-1 { // for query subsequences ending at 0, this could overflow negative on the last path item
-          q -= 1;
-        }
-        taln.push(tseq[t] as char);
-        t += 1;
-        '|'
-      },
-      Subst => {
-        nsubst += 1;
-        qaln.push(qchar);
-        if !rev {
-          q += 1;
-        } else if i < path.len()-1 {
-          q -= 1;
-        }
-        taln.push(tseq[t] as char);
-        t += 1;
-        '*'
-      },
-      Ins => {
-        nins += 1;
-        qaln.push(qchar);
-        if !rev {
-          q += 1;
-        } else if i < path.len()-1 {
-          q -= 1;
-        }
-        taln.push('-');
-        '*'
-      },
-      Del => {
-        ndel += 1;
-        qaln.push('-');
-        taln.push(tseq[t] as char);
-        t += 1;
-        '*'
-      }
-    });
-  }
-
-  // a few sanity checks - these can probably be skipped once everything is stable
-  if !rev {
-    assert!(nmatch + nsubst + nins == last_match.qpos+args.k as u32 - first_match.qpos, "{} matches, {} subst, {} ins, {} end+1, {} begin", nmatch, nsubst, nins, first_match.qpos+args.k as u32, last_match.qpos);
-  } else {
-    assert!(nmatch + nsubst + nins == first_match.qpos+args.k as u32 - last_match.qpos, "{} matches, {} subst, {} ins, {} end+1, {} begin", nmatch, nsubst, nins, last_match.qpos+args.k as u32, first_match.qpos);
-  }
-  assert!(nmatch + nsubst + ndel == last_match.tpos+args.k as u32 - first_match.tpos, "{} matches, {} subst, {} del, {} end+1, {} begin", nmatch, nsubst, ndel, last_match.tpos+args.k as u32, first_match.tpos);
-
-  print!("{} ", '?'); // score
-  print!("{} ", nmatch); // match
-  print!("{} ", nsubst); // subst
-  print!("{} ", nins); // ins
-  print!("{} ", ndel); // del
-
-  print!("{} ", '?'); // mapQV
-  print!("{} ", qaln); // query alignment seq
-  print!("{} ", pattern); // path
-  println!("{}", taln); // target alignment seq
+  println!("{}", nmatches);
 }
 
 
@@ -493,7 +345,7 @@ fn hash_ref(ref_fa:&str, ref_hash:&mut HashMap<u64,Position>, args:&Args, fw_mod
     { // block to deal with hash seq, allowing the borrow of record to end before it's added to the ref_hash
       let seq = record.seq();
 
-      info!("Loading reference {}: {} ({}bp)", rid, record.id().unwrap(), seq.len());
+      //info!("Loading reference {}: {} ({}bp)", rid, record.id().unwrap(), seq.len());
 
       if alphabet.is_word(seq) {
 
