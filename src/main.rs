@@ -16,11 +16,7 @@ use seqhash::SeqHash;
 mod util;
 use util::{Args,help_and_fail};
 
-// for HashMap method
-use std::collections::HashMap;
-
 use std::vec::Vec;
-use std::str::FromStr;
 use std::env;
 
 use bio::alphabets;
@@ -222,6 +218,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, fw_mod:u64, alphabet:
 
       if best_en-best_st+1 >= args.min_ordered_matches {
         debug!("  hit ref {} ({}) {} times at q{}-{}, t{}-{}", rid/2, rid&1, best_en-best_st+1, matches[best_st].qpos, matches[best_en].qpos, matches[best_st].tpos, matches[best_en].tpos);
+        report(&record, &finder.sequences()[(rid/2) as usize], &matches[best_st], &matches[best_en], best_en-best_st+1, rid&1==1, args);
       }
     }
   }

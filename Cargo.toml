@@ -6,6 +6,5 @@ authors = ["Jeremy <jeremyrwang@gmail.com>"]
 [dependencies]
 bio = "*"
 log = "*"
+time = "*"
 env_logger = "*"
-argparse = "*"
-docopt = "*"

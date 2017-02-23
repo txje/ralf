@@ -133,4 +133,8 @@ impl<'a> Overlapper for SeqHash<'a> {
 
     hit_hash
   }
+
+  fn sequences(&self) -> &Vec<fasta::Record> {
+    &self.sequences
+  }
 }

@@ -1,5 +1,9 @@
+extern crate bio;
+
 use std::fmt;
 use std::collections::HashMap;
+
+use bio::io::fasta;
 
 /*
  * Defines a trait returning a list of matching k-mers (Vec<Position>) from some structure
@@ -30,4 +34,5 @@ impl fmt::Debug for KmerMatch {
 
 pub trait Overlapper {
   fn ovlSeq(&self, &[u8]) -> HashMap<u32,Vec<KmerMatch>>;
+  fn sequences(&self) -> &Vec<fasta::Record>;
 }
