@@ -4,8 +4,8 @@ version = "0.1.0"
 authors = ["Jeremy <jeremyrwang@gmail.com>"]
 
 [dependencies]
-bio = "*"
+bio = "0.11"
 log = "*"
+time = "*"
 env_logger = "*"
-argparse = "*"
-docopt = "*"
+image = "*"
