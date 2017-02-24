@@ -10,17 +10,17 @@ use bio::io::fasta;
 use bio::alphabets;
 
 use overlapper::{Overlapper, Position, KmerMatch};
-use util::{Args,help_and_fail};
+use util::{help_and_fail};
 
-pub struct SeqHash<'a> {
+pub struct SeqHash {
   hash: HashMap<u64,Vec<Position>>,
   sequences: Vec<fasta::Record>,
-  fw_mod: u64,
-  args:&'a Args
+  k:usize,
+  rep_limit:usize
 }
 
-impl<'a> SeqHash<'a> {
-  pub fn new(ref_fa:&str, args:&'a Args, fw_mod:u64, rev_shift:u8, alphabet:&alphabets::Alphabet) -> SeqHash<'a> {
+impl SeqHash {
+  pub fn new(ref_fa:&str, k:usize, rep_limit:usize, alphabet:&alphabets::Alphabet) -> SeqHash {
     let mut rid:u32 = 0;
 
     // ideally the initial capacity will reflect the total # of unique k-mers
@@ -33,7 +33,7 @@ impl<'a> SeqHash<'a> {
       Err(e) => help_and_fail(format!("Error reading file '{}'", ref_fa))
     };
     debug!("Creating SeqHash with capacity {}", hash_size);
-    let mut sh:SeqHash = SeqHash{hash: HashMap::with_capacity(hash_size), sequences: Vec::new(), fw_mod:fw_mod, args:args};
+    let mut sh:SeqHash = SeqHash{hash: HashMap::with_capacity(hash_size), sequences: Vec::new(), k:k, rep_limit:rep_limit};
 
     // Iterate over a FASTA file, use the alphabet to validate read sequences
     let reader = fasta::Reader::from_file(ref_fa).unwrap();
@@ -49,7 +49,7 @@ impl<'a> SeqHash<'a> {
         //debug!("Loading reference {}: {} ({}bp)", rid, record.id().unwrap(), seq.len());
 
         if alphabet.is_word(seq) {
-          sh.kmer_pack_hash(&seq, &args, fw_mod, rev_shift, rid, slen);
+          sh.kmer_pack_hash(&seq, rid, slen);
         } else {
           info!("Reference sequence {} contains something that is not in (A,C,G,T,N). The *entire* sequence is being ignored.", record.id().unwrap());
         }
@@ -60,22 +60,24 @@ impl<'a> SeqHash<'a> {
     sh
   }
 
-  fn kmer_pack_hash(&mut self, seq:&[u8], args:&Args, fw_mod:u64, rev_shift:u8, rid:u32, slen:usize) {
+  fn kmer_pack_hash(&mut self, seq:&[u8], rid:u32, slen:usize) {
     let mut kmer:u64 = 0;
     let mut rev_kmer:u64 = 0;
+    let fw_mod:u64 = 1 << ((2*self.k) as u64);
+    let rev_shift:u8 = 2*(self.k as u8-1);
 
     // set up sliding kmer (and reverse) as uint64
-    for i in 0..args.k-1 {
+    for i in 0..self.k-1 {
       kmer = (kmer << 2) + ((seq[i] >> 1) & 3) as u64;
       rev_kmer = (rev_kmer >> 2) + ((((seq[i] as u64 / 2) & 3) ^ 2) << rev_shift);
     }
 
-    for i in 0..(seq.len()-args.k+1) {
-      kmer = (kmer << 2) + ((seq[i+args.k-1] >> 1) & 3) as u64;
-      if args.k < 32 {
+    for i in 0..(seq.len()-self.k+1) {
+      kmer = (kmer << 2) + ((seq[i+self.k-1] >> 1) & 3) as u64;
+      if self.k < 32 {
         kmer = kmer % fw_mod;
       }
-      rev_kmer = (rev_kmer >> 2) + ((((seq[i+args.k-1] as u64 / 2) & 3) ^ 2) << rev_shift);
+      rev_kmer = (rev_kmer >> 2) + ((((seq[i+self.k-1] as u64 / 2) & 3) ^ 2) << rev_shift);
 
       if !self.hash.contains_key(&kmer) {
         let pos_vec:Vec<Position> = Vec::new();
@@ -92,31 +94,32 @@ impl<'a> SeqHash<'a> {
       }
       {
         let mut pos_vec = self.hash.get_mut(&rev_kmer).unwrap();
-        // when aligned to the reverse target strand, positions are RELATIVE TO 5' (opposite) end strand
-        pos_vec.push(Position{rid:(rid<<1)+1, pos:(slen-i-args.k) as u32});
+        // when aligned to the reverse target strand, positions are RELATIVE TO 3' (opposite) end strand
+        pos_vec.push(Position{rid:(rid<<1)+1, pos:(slen-i-self.k) as u32});
       }
     }
   }
 }
 
-impl<'a> Overlapper for SeqHash<'a> {
+impl Overlapper for SeqHash {
   fn ovlSeq(&self, seq:&[u8]) -> HashMap<u32,Vec<KmerMatch>> {
+    let fw_mod:u64 = 1 << ((2*self.k) as u64);
     let mut hit_hash:HashMap<u32,Vec<KmerMatch>> = HashMap::new();
 
     let mut kmer:u64 = 0;
-    for i in 0..self.args.k-1 {
+    for i in 0..self.k-1 {
       kmer = (kmer << 2) + ((seq[i] >> 1) & 3) as u64;
     }
 
-    for i in 0..(seq.len()-self.args.k+1) {
-      kmer = (kmer << 2) + ((seq[i+self.args.k-1] >> 1) & 3) as u64;
-      if self.args.k < 32 {
-        kmer = kmer % self.fw_mod;
+    for i in 0..(seq.len()-self.k+1) {
+      kmer = (kmer << 2) + ((seq[i+self.k-1] >> 1) & 3) as u64;
+      if self.k < 32 {
+        kmer = kmer % fw_mod;
       }
 
       match self.hash.get(&kmer) {
         Some(pos_vec) => {
-          if pos_vec.len() < self.args.rep_limit {
+          if pos_vec.len() < self.rep_limit {
             for p in 0..pos_vec.len() {
               if !hit_hash.contains_key(&pos_vec[p].rid) {
                 let match_vec = Vec::new();

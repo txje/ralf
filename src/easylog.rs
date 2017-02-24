@@ -24,11 +24,11 @@ impl log::Log for EasyLogger {
   fn log(&self, record: &LogRecord) {
     if self.enabled(record.metadata()) {
       let _ = match record.level() {
-        LogLevel::Trace => writeln!(&mut io::stderr(), "#{} - {}", record.level(), record.args()),
-        LogLevel::Debug => writeln!(&mut io::stderr(), "#{} - {}", record.level(), record.args()),
-        LogLevel::Info => writeln!(&mut io::stderr(), "#{} - {}", record.level(), record.args()),
-        LogLevel::Warn => writeln!(&mut io::stderr(), "#{} - {}", record.level(), record.args()),
-        LogLevel::Error => writeln!(&mut io::stderr(), "#{} - {}", record.level(), record.args()),
+        LogLevel::Trace => writeln!(&mut io::stderr(), "# {} - {}", record.level(), record.args()),
+        LogLevel::Debug => writeln!(&mut io::stderr(), "# {} - {}", record.level(), record.args()),
+        LogLevel::Info => writeln!(&mut io::stderr(), "# {} - {}", record.level(), record.args()),
+        LogLevel::Warn => writeln!(&mut io::stderr(), "# {} - {}", record.level(), record.args()),
+        LogLevel::Error => writeln!(&mut io::stderr(), "# {} - {}", record.level(), record.args()),
       };
     }
   }

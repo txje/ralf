@@ -14,13 +14,21 @@ use fmifinder::{FMIFinder};
 mod seqhash;
 use seqhash::SeqHash;
 mod util;
-use util::{Args,help_and_fail};
+use util::{Args, help_and_fail};
+mod dotplot;
+use dotplot::{DotPlot, draw_dp};
 
 use std::vec::Vec;
 use std::env;
+use std::panic;
 
 use bio::alphabets;
+use bio::alphabets::dna::revcomp;
 use bio::io::fasta;
+
+use bio::alignment::pairwise::Aligner;
+use bio::alignment::{AlignmentOperation, Alignment};
+use bio::alignment::AlignmentOperation::*; // enum: Match, Subst, Del, Ins
 
 fn main() {
   easylog::init().unwrap();
@@ -135,12 +143,9 @@ fn main() {
 
   let alphabet = alphabets::dna::n_alphabet();
 
-  let rev_shift:u8 = 2*(args.k as u8-1);
-  let fw_mod:u64 = 1 << ((2*args.k) as u64);
-
 
   info!("Building SeqHash from {}", args.ref_fa);
-  let finder = SeqHash::new(&args.ref_fa[..], &args, fw_mod, rev_shift, &alphabet);
+  let finder = SeqHash::new(&args.ref_fa[..], args.k, args.rep_limit, &alphabet);
 
   /*
   info!("Building BWT+FMD-Index from {}", args.ref_fa);
@@ -152,7 +157,7 @@ fn main() {
   info!("  {:.4} seconds", (t_1 - t_0) as f64 / 1000000000.0);
 
   info!("Overlapping reads from {}", args.read_fa);
-  ovl_reads(&args.read_fa[..], &finder, &args, fw_mod, &alphabet);
+  ovl_reads(&args.read_fa[..], &finder, &args, &alphabet);
 
   let t_2:u64 = time::precise_time_ns();
   info!("  {:.4} seconds", (t_2 - t_1) as f64 / 1000000000.0);
@@ -161,14 +166,29 @@ fn main() {
 }
 
 
-fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, fw_mod:u64, alphabet:&alphabets::Alphabet) {
+fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::Alphabet) {
 
   let reader = fasta::Reader::from_file(read_fa).unwrap();
 
+  // a 2d matrix for dots for every combination of query and target, hence 4D
+  let mut dp = DotPlot{matrix: Vec::with_capacity(finder.sequences().len())};
+  dp.matrix.resize(finder.sequences().len(), Vec::new()); // this actually fills it with 0s
+  let dp_block_size = 1000;
+
+  let mut r = 0; // read counter
   for record in reader.records() {
 
     let record = record.unwrap();
     let seq = record.seq();
+
+    // create each dp matrix
+    for i in 0..dp.matrix.len() {
+      dp.matrix[i].push(Vec::with_capacity(finder.sequences()[i].seq().len()/dp_block_size + 1));
+      dp.matrix[i][r].resize(finder.sequences()[i].seq().len()/dp_block_size + 1, Vec::new()); // this actually fills it with 0s
+      for j in 0..dp.matrix[i][r].len() {
+        dp.matrix[i][r][j].resize(seq.len()/dp_block_size + 1, 0); // this actually fills it with 0s
+      }
+    }
 
     debug!("Read {} ({} bp)", record.id().unwrap(), seq.len());
 
@@ -180,7 +200,10 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, fw_mod:u64, alphabet:
 
     for (rid, matches) in hit_hash.iter_mut() {
 
-      //let rev = rid & 1 == 1;
+      // fill dotplot
+      for i in 0..matches.len() {
+        dp.matrix[(rid/2) as usize][r as usize][(if rid&1==1 {matches[i].tpos} else {finder.sequences()[(rid/2) as usize].seq().len() as u32 - (matches[i].tpos + args.k as u32)}) as usize / dp_block_size][matches[i].qpos as usize/dp_block_size] += 1;
+      }
 
       //matches.sort_by(|a, b| a.tpos.cmp(&b.tpos)); // sort by target position
       let mut matches = lis(&matches);
@@ -217,11 +240,66 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, fw_mod:u64, alphabet:
 
 
       if best_en-best_st+1 >= args.min_ordered_matches {
+        let aln = align(&matches, &seq, rid, &finder.sequences()[(rid/2) as usize].seq(), args.k);
         debug!("  hit ref {} ({}) {} times at q{}-{}, t{}-{}", rid/2, rid&1, best_en-best_st+1, matches[best_st].qpos, matches[best_en].qpos, matches[best_st].tpos, matches[best_en].tpos);
-        report(&record, &finder.sequences()[(rid/2) as usize], &matches[best_st], &matches[best_en], best_en-best_st+1, rid&1==1, args);
+        report(&record, &finder.sequences()[(rid/2) as usize], &matches[best_st], &matches[best_en], best_en-best_st+1, rid&1==1, args.k, &aln);
       }
     }
+    r += 1; // read counter
   }
+  draw_dp(dp);
+}
+
+fn align(matches:&Vec<KmerMatch>, query_seq:&[u8], rid:&u32, target_seq:&[u8], k:usize) -> Alignment {
+  let rev = rid&1 == 1;
+
+  // this is a vector of the AlignmentOperation enum: Match, Subst, Ins, Del
+  // initialize to a reasonably expected capacity for long read alignment:
+  //   length of query string + 20%
+  // this doesn't take into account extra alignment 5' and 3' of the terminal k-mer matches
+  let max_query_len = if rev {matches[0].qpos - matches[matches.len()-1].qpos} else {matches[matches.len()-1].qpos - matches[0].qpos};
+  let mut path:Vec<AlignmentOperation> = Vec::with_capacity((max_query_len as f32 * 1.2) as usize);
+  let mut score:i32 = 0;
+
+  // first k-mer match
+  for _ in 0..k {
+    path.push(Match);
+  }
+  score += k as i32;
+
+  let mut m_start:usize = 0;
+
+  // compute DP alignment between matches
+  for i in 1..matches.len() {
+    let qdiff = matches[i].qpos - matches[i-1].qpos;
+    let tdiff = matches[i].tpos - matches[i-1].tpos;
+
+    // lambda scoring function: 1 if match, -1 if mismatch
+    let score_func = |a: u8, b: u8| if a == b {1i32} else {-1i32};
+    let gap_open:i32 = -1;
+    let gap_extend:i32 = -1;
+    let mut aligner = Aligner::with_capacity(qdiff as usize - k, tdiff as usize - k, gap_open, gap_extend, &score_func);
+    let alignment = if !rev {
+      let qsub = &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize];
+      let tsub = &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize];
+      aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
+    } else {
+      aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
+    };
+    path.extend(alignment.operations);
+    score += alignment.score;
+
+    // k-mer match
+    for _ in 0..k {
+      path.push(Match);
+    }
+    score += k as i32;
+  }
+
+  let qalnlen = matches[matches.len()-1].qpos as usize - matches[0].qpos as usize + k;
+  let talnlen = matches[matches.len()-1].tpos as usize - matches[0].tpos as usize + k;
+  // ends are 1 PAST the last index
+  Alignment{score:score, ystart:0, xstart:0, yend:talnlen, xend:qalnlen, xlen:qalnlen, operations:path}
 }
 
 /*
@@ -230,26 +308,53 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, fw_mod:u64, alphabet:
  5   tName tSeqLength tStart tEnd tStrand
  10  numKmerMatches
 */
-fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, last_match:&KmerMatch, nmatches:usize, rev:bool, args:&Args) {
+fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, last_match:&KmerMatch, nmatches:usize, rev:bool, k:usize, aln:&Alignment) {
 
   // it's probably NOT slow to have to get seq() only to find it's len
   // it should be returning a reference to a slice of the underlying string, so takes O(1) time
-  let qlen = query.seq().len();
+  let tlen = target.seq().len();
 
   print!("{} ", query.id().unwrap());
-  print!("{} ", qlen);
-  // reported position will be relative to the appropriate strand
-  print!("{} ", if !rev {first_match.qpos} else {qlen as u32 - (first_match.qpos + args.k as u32)});
-  print!("{} ", (if !rev {last_match.qpos + args.k as u32 - 1} else {qlen as u32 - 1 - last_match.qpos})); // right now, end position is INCLUSIVE
-  print!("{} ", if !rev {0} else {1});
+  print!("{} ", query.seq().len());
+  print!("{} ", first_match.qpos);
+  print!("{} ", last_match.qpos + k as u32 - 1);
+  print!("0 "); // query is always the fw strand
 
   print!("{} ", target.id().unwrap());
-  print!("{} ", target.seq().len());
-  print!("{} ", first_match.tpos);
-  print!("{} ", last_match.tpos + args.k as u32 - 1);
-  print!("0 "); // target will always show fw strand
+  print!("{} ", tlen);
+  // reported position will be relative to the appropriate strand
+  print!("{} ", if !rev {first_match.tpos} else {tlen as u32 - (first_match.tpos + k as u32)});
+  print!("{} ", (if !rev {last_match.tpos + k as u32 - 1} else {tlen as u32 - 1 - last_match.tpos})); // right now, end position is INCLUSIVE
+  print!("{} ", if !rev {0} else {1});
 
-  println!("{}", nmatches);
+  print!("{} ", nmatches);
+
+  // compute simple stats
+  let mut n_match:usize = 0;
+  let mut n_mis:usize = 0;
+  let mut n_del:usize = 0;
+  let mut n_ins:usize = 0;
+  for op in &aln.operations {
+    match op {
+      &Match => {n_match+=1;},
+      &Subst => {n_mis+=1;},
+      &Del => {n_del+=1;},
+      &Ins => {n_ins+=1;}
+    }
+  }
+  let acc = n_match as f32 / aln.operations.len() as f32;
+  print!("{} {} {} {} {:.4} ", n_match, n_mis, n_del, n_ins, acc);
+
+  let qseq = &query.seq()[first_match.qpos as usize .. last_match.qpos as usize + k];
+  let tseq = &target.seq()[first_match.tpos as usize .. last_match.tpos as usize + k];
+  let rv_tseq = &revcomp(tseq);
+  let pretty_fmt = aln.pretty(qseq, if rev {rv_tseq} else {tseq}); // pretty() reports a string with 3 rows: query, alignment, target
+  let mut parts = pretty_fmt.split("\n");
+  print!("{} ", parts.next().unwrap());
+  let aln_string = parts.next().unwrap().replace(" ", "*");
+  print!("{} ", aln_string);
+  print!("{} ", parts.next().unwrap());
+  println!("");
 }
 
 
