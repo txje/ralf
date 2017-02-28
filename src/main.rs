@@ -1,4 +1,5 @@
 extern crate bio;
+
 extern crate time;
 
 // I guess this is required to enable info!, debug!, etc macros defined in log crate
@@ -7,16 +8,15 @@ mod easylog;
 
 mod overlapper;
 use overlapper::{Overlapper, Position, KmerMatch};
-/*
 mod fmifinder;
 use fmifinder::{FMIFinder};
-*/
 mod seqhash;
 use seqhash::SeqHash;
 mod util;
 use util::{Args, help_and_fail};
 mod dotplot;
 use dotplot::{DotPlot, draw_dp};
+mod bwt; // needed in fmifinder
 
 use std::vec::Vec;
 use std::env;
@@ -144,13 +144,13 @@ fn main() {
   let alphabet = alphabets::dna::n_alphabet();
 
 
+  /*
   info!("Building SeqHash from {}", args.ref_fa);
   let finder = SeqHash::new(&args.ref_fa[..], args.k, args.rep_limit, &alphabet);
-
-  /*
-  info!("Building BWT+FMD-Index from {}", args.ref_fa);
-  let finder = FMIFinder::new(&args.ref_fa[..], &args, &alphabet);
   */
+
+  info!("Building BWT+FMD-Index from {}", args.ref_fa);
+  let finder = FMIFinder::new(&args.ref_fa[..], args.k, args.rep_limit, &alphabet);
 
 
   let t_1:u64 = time::precise_time_ns();
@@ -273,6 +273,7 @@ fn align(matches:&Vec<KmerMatch>, query_seq:&[u8], rid:&u32, target_seq:&[u8], k
   for i in 1..matches.len() {
     let qdiff = matches[i].qpos - matches[i-1].qpos;
     let tdiff = matches[i].tpos - matches[i-1].tpos;
+    debug!("Aligning '{:?}' to '{:?}'", &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
 
     // lambda scoring function: 1 if match, -1 if mismatch
     let score_func = |a: u8, b: u8| if a == b {1i32} else {-1i32};
@@ -306,7 +307,8 @@ fn align(matches:&Vec<KmerMatch>, query_seq:&[u8], rid:&u32, target_seq:&[u8], k
  format:
  0   qName qSeqLength qStart qEnd qStrand
  5   tName tSeqLength tStart tEnd tStrand
- 10  numKmerMatches
+ 10  numKmerMatches numMatches numSubst numDel numIns
+ 15  queryAln alnString targetAln
 */
 fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, last_match:&KmerMatch, nmatches:usize, rev:bool, k:usize, aln:&Alignment) {
 
