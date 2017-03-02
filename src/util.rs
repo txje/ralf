@@ -2,6 +2,14 @@ use std;
 use bio::io::fasta;
 use bio::alphabets;
 
+pub fn bwt_alphabet() -> alphabets::Alphabet {
+  alphabets::Alphabet::new(b"$ACGTN")
+}
+pub fn rank_alphabet() -> alphabets::Alphabet {
+  alphabets::Alphabet::new(&[0u8, 1u8, 2u8, 3u8, 4u8, 5u8])
+}
+
+
 #[derive(Debug)]
 pub struct Args {
   pub ref_fa: String,

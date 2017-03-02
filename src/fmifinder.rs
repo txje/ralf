@@ -7,13 +7,15 @@ use std::rc::Rc;
 
 use bio::io::fasta;
 use bio::alphabets;
+use bio::alphabets::dna::revcomp;
+use bio::alphabets::RankTransform;
 use bio::data_structures::fmindex::{FMIndex, FMDIndex};
 use bio::data_structures::suffix_array::{RawSuffixArray, SuffixArray, suffix_array};
 use bio::data_structures::bwt::{bwt, less, Occ, BWT, Less};
 
 //use bwt::{bwt, less, Occ, BWT, Less};
 use overlapper::{Overlapper, Position, KmerMatch};
-use util::{cat_seq};
+use util::{cat_seq, bwt_alphabet, rank_alphabet};
 
 
 /* -----------------------------------------------------------------
@@ -27,6 +29,8 @@ pub struct FMIFinder {
   // -- use an Arc for thread-safe atomic reference counting (around the FMIIndex if need be)
   fmd: FMDIndex<Rc<BWT>,Rc<Less>,Rc<Occ>>,
   sequences: Vec<fasta::Record>,
+  ref_seq: Vec<u8>,
+  ref_idx: Vec<usize>,
   k: usize,
   rep_limit: usize
 }
@@ -41,36 +45,42 @@ impl FMIFinder {
     let t_1:u64 = time::precise_time_ns();
     info!("  {:.4} seconds", (t_1 - t_0) as f64 / 1000000000.0);
 
-    // this all has to be built here for unavoidable (I think) lifetime issues
-    // (the FMIndex *requires* references to bwt,less,occ, which necessarily go out of scope)
-    info!("Building suffix array");
-    let sa = suffix_array(&cat_seq); // slice the [u8] out of a Vec<u8>, I think
+    info!("Computing rank transform");
+    let rank_trans = RankTransform::new(&bwt_alphabet());
+    let rank_alphabet = rank_alphabet();
+    let seq = rank_trans.transform(&cat_seq);
     let t_2:u64 = time::precise_time_ns();
     info!("  {:.4} seconds", (t_2 - t_1) as f64 / 1000000000.0);
 
-    info!("Building BWT");
-    let bwt = bwt(&cat_seq, &sa);
+    // this all has to be built here for unavoidable (I think) lifetime issues
+    // (the FMIndex *requires* references to bwt,less,occ, which necessarily go out of scope)
+    info!("Building suffix array");
+    let sa = suffix_array(&seq); // slice the &[u8] out of a Vec<u8>
     let t_3:u64 = time::precise_time_ns();
     info!("  {:.4} seconds", (t_3 - t_2) as f64 / 1000000000.0);
 
-    info!("Computing less");
-    let less = less(&bwt, &alphabet);
+    info!("Building BWT");
+    let bwt = bwt(&seq, &sa);
     let t_4:u64 = time::precise_time_ns();
     info!("  {:.4} seconds", (t_4 - t_3) as f64 / 1000000000.0);
 
-    info!("Computing occurrences");
-    let occ = Occ::new(&bwt, 3, &alphabet); // sampling rate of every 3rd position
+    info!("Computing less");
+    let less = less(&bwt, &rank_alphabet);
     let t_5:u64 = time::precise_time_ns();
     info!("  {:.4} seconds", (t_5 - t_4) as f64 / 1000000000.0);
 
-    info!("Building FM-index");
-    //let fm = FMIndex::new(DerefBox{value: bwt}, DerefBox{value: less}, DerefBox{value: occ});
-    let fm = FMIndex::new(Rc::new(bwt), Rc::new(less), Rc::new(occ));
-    let fmd = FMDIndex::from(fm);
+    info!("Computing occurrences -- should take up O(n / 3[sampling] * 6[characters]) space");
+    let occ = Occ::new(&bwt, 3, &rank_alphabet); // sampling rate of every 3rd position
     let t_6:u64 = time::precise_time_ns();
     info!("  {:.4} seconds", (t_6 - t_5) as f64 / 1000000000.0);
 
-    FMIFinder{sa:sa, fmd:fmd, sequences:ref_seqs, k:k, rep_limit:rep_limit}
+    info!("Building FM-index");
+    let fm = FMIndex::new(Rc::new(bwt), Rc::new(less), Rc::new(occ), rank_trans); // Rc (single-thread reference counter) gains ownership of BWT components, derefs and clones
+    let fmd = FMDIndex::from(fm);
+    let t_7:u64 = time::precise_time_ns();
+    info!("  {:.4} seconds", (t_7 - t_6) as f64 / 1000000000.0);
+
+    FMIFinder{sa:sa, fmd:fmd, sequences:ref_seqs, ref_seq:cat_seq, ref_idx:seq_idx, k:k, rep_limit:rep_limit}
   }
 }
 
@@ -81,9 +91,13 @@ impl Overlapper for FMIFinder {
     for i in 0..(seq.len()-self.k+1) {
       let kmer = &seq[i..i+self.k]; // just using string slice for the bwt
 
-      let intervals = self.fmd.smems(kmer, 2);
+      let intervals = self.fmd.smems_transform(kmer, 2);
       let forward_positions = intervals[0].forward().occ(&self.sa);
       let revcomp_positions = intervals[0].revcomp().occ(&self.sa);
+
+      debug!("fw: {:?}", forward_positions);
+      debug!("rv: {:?}", revcomp_positions);
+      debug!("kmer {:?} matched fw[0] {:?} and rv[0] {:?}", kmer, &self.ref_seq[forward_positions[0]..forward_positions[0]+self.k], &revcomp(&self.ref_seq[revcomp_positions[0]..revcomp_positions[0]+self.k]));
 
       // convert to Vec<Position>
       let pos_vec:Vec<Position> = Vec::new();

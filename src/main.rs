@@ -16,7 +16,6 @@ mod util;
 use util::{Args, help_and_fail};
 mod dotplot;
 use dotplot::{DotPlot, draw_dp};
-mod bwt; // needed in fmifinder
 
 use std::vec::Vec;
 use std::env;
@@ -141,16 +140,16 @@ fn main() {
 
   let t_0:u64 = time::precise_time_ns();
 
-  let alphabet = alphabets::dna::n_alphabet();
+  let alphabet = alphabets::dna::n_alphabet_upper();
 
 
-  /*
   info!("Building SeqHash from {}", args.ref_fa);
   let finder = SeqHash::new(&args.ref_fa[..], args.k, args.rep_limit, &alphabet);
-  */
 
+  /*
   info!("Building BWT+FMD-Index from {}", args.ref_fa);
   let finder = FMIFinder::new(&args.ref_fa[..], args.k, args.rep_limit, &alphabet);
+  */
 
 
   let t_1:u64 = time::precise_time_ns();
@@ -240,6 +239,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
 
 
       if best_en-best_st+1 >= args.min_ordered_matches {
+        debug!("Matches: {:?}", matches);
         let aln = align(&matches, &seq, rid, &finder.sequences()[(rid/2) as usize].seq(), args.k);
         debug!("  hit ref {} ({}) {} times at q{}-{}, t{}-{}", rid/2, rid&1, best_en-best_st+1, matches[best_st].qpos, matches[best_en].qpos, matches[best_st].tpos, matches[best_en].tpos);
         report(&record, &finder.sequences()[(rid/2) as usize], &matches[best_st], &matches[best_en], best_en-best_st+1, rid&1==1, args.k, &aln);
@@ -273,7 +273,6 @@ fn align(matches:&Vec<KmerMatch>, query_seq:&[u8], rid:&u32, target_seq:&[u8], k
   for i in 1..matches.len() {
     let qdiff = matches[i].qpos - matches[i-1].qpos;
     let tdiff = matches[i].tpos - matches[i-1].tpos;
-    debug!("Aligning '{:?}' to '{:?}'", &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
 
     // lambda scoring function: 1 if match, -1 if mismatch
     let score_func = |a: u8, b: u8| if a == b {1i32} else {-1i32};
@@ -283,8 +282,10 @@ fn align(matches:&Vec<KmerMatch>, query_seq:&[u8], rid:&u32, target_seq:&[u8], k
     let alignment = if !rev {
       let qsub = &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize];
       let tsub = &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize];
+      debug!("Aligning '{:?}' to '{:?}'", &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
       aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
     } else {
+      debug!("Aligning '{:?}' to '{:?}'", &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
       aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
     };
     path.extend(alignment.operations);
