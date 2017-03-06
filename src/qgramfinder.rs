@@ -6,7 +6,7 @@ use std::ops::Deref;
 
 use bio::io::fasta;
 use bio::alphabets;
-use bio::data_structures::qgram_index;
+use bio::data_structures::qgram_index::QGramIndex;
 
 //use bwt::{bwt, less, Occ, BWT, Less};
 use overlapper::{Overlapper, Position, KmerMatch};
@@ -27,7 +27,6 @@ pub struct QGramFinder {
 
 impl QGramFinder {
   pub fn new(ref_fa:&str, k:usize, rep_limit:usize, alphabet:&alphabets::Alphabet) -> QGramFinder {
-
     let t_0:u64 = time::precise_time_ns();
 
     info!("Concatenating reference sequence from {}", ref_fa);
@@ -35,12 +34,13 @@ impl QGramFinder {
     let t_1:u64 = time::precise_time_ns();
     info!("  {:.4} seconds", (t_1 - t_0) as f64 / 1000000000.0);
 
-    info!("Building Q-gram index", ref_fa);
-    let qgram_index = qgram_index::QGramIndex::with_max_count(k, &cat_seq, &alphabet, rep_limit);
+    info!("Building Q-gram index");
+    debug!("k:{}, seq len: {}, rep_limit: {}", k, cat_seq.len(), rep_limit);
+    let qgi = QGramIndex::with_max_count(k as u32, &cat_seq, &alphabet, rep_limit);
     let t_2:u64 = time::precise_time_ns();
     info!("  {:.4} seconds", (t_2 - t_1) as f64 / 1000000000.0);
 
-    QGramFinder{qgi:qgram_index, sequences:ref_seqs, k:k, rep_limit:rep_limit}
+    QGramFinder{qgi:qgi, sequences:ref_seqs, k:k, rep_limit:rep_limit}
   }
 }
 
@@ -51,7 +51,7 @@ impl Overlapper for QGramFinder {
     for i in 0..(seq.len()-self.k+1) {
       let kmer = &seq[i..i+self.k]; // just using string slice for the bwt
 
-      let matches = qgram_index.matches(kmer, 1);
+      let matches = self.qgi.matches(kmer, 1);
 
       // convert to Vec<Position>
       let pos_vec:Vec<Position> = Vec::new();

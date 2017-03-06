@@ -27,7 +27,7 @@ impl SeqHash {
     // in practice, 2x the total reference genome size accounts for exclusively
     //   unique k-mers on both strands
 
-    let mut hash_size = 0; // this will never be used - if it can't infer size from the fasta file, the program will fail
+    let mut hash_size = 0; // zero will never be used - if it can't infer size from the fasta file, the program will fail
     match fs::metadata(ref_fa) {
       Ok(md) => {hash_size = md.len() as usize*2;},
       Err(e) => help_and_fail(format!("Error reading file '{}'", ref_fa))

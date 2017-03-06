@@ -10,10 +10,12 @@ mod overlapper;
 use overlapper::{Overlapper, Position, KmerMatch};
 mod fmifinder;
 use fmifinder::{FMIFinder};
+mod qgramfinder;
+use qgramfinder::{QGramFinder};
 mod seqhash;
 use seqhash::SeqHash;
 mod util;
-use util::{Args, help_and_fail};
+use util::{Args, help_and_fail, bwt_alphabet};
 mod dotplot;
 use dotplot::{DotPlot, draw_dp};
 
@@ -140,15 +142,23 @@ fn main() {
 
   let t_0:u64 = time::precise_time_ns();
 
-  let alphabet = alphabets::dna::n_alphabet_upper();
+  let alphabet = bwt_alphabet();
 
 
   info!("Building SeqHash from {}", args.ref_fa);
   let finder = SeqHash::new(&args.ref_fa[..], args.k, args.rep_limit, &alphabet);
 
   /*
+  // takes way too much memory unless you use my modified version that uses a reduced ACGTN$ alphabet and ranktransform
+  // in which case it only uses a bunch of memory
   info!("Building BWT+FMD-Index from {}", args.ref_fa);
   let finder = FMIFinder::new(&args.ref_fa[..], args.k, args.rep_limit, &alphabet);
+  */
+
+  /*
+  // requires some 10-20x (alphabet size)^k -- this is a lot and can only be practically used for k<~10
+  info!("Building QGram index from {}", args.ref_fa);
+  let finder = QGramFinder::new(&args.ref_fa[..], args.k, args.rep_limit, &alphabet);
   */
 
 
