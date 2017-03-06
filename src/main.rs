@@ -233,6 +233,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
         let qdiff = matches[i].qpos - matches[i-1].qpos;
         //let tdiff = if matches[i].tpos > matches[i-1].tpos {matches[i].tpos - matches[i-1].tpos} else {matches[i-1].tpos - matches[i].tpos};
         let tdiff = matches[i].tpos - matches[i-1].tpos;
+        debug!("matches {},{} -> {},{} -- qdiff: {}, tdiff: {}", matches[i-1].qpos, matches[i-1].tpos, matches[i].qpos, matches[i].tpos, qdiff, tdiff);
         if (if qdiff > tdiff {qdiff - tdiff} else {tdiff - qdiff}) > args.max_abs_distance
           && (tdiff as f32 > qdiff as f32 * (1.0 + args.max_offset_variance) || qdiff as f32 > tdiff as f32 * (1.0 + args.max_offset_variance)) {
           if i-m_start > best_en-best_st+1 {
@@ -249,9 +250,9 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
 
 
       if best_en-best_st+1 >= args.min_ordered_matches {
-        debug!("Matches: {:?}", matches);
-        let aln = align(&matches, &seq, rid, &finder.sequences()[(rid/2) as usize].seq(), args.k);
+        //debug!("Matches: {:?}", matches[best_st..best_en+1]);
         debug!("  hit ref {} ({}) {} times at q{}-{}, t{}-{}", rid/2, rid&1, best_en-best_st+1, matches[best_st].qpos, matches[best_en].qpos, matches[best_st].tpos, matches[best_en].tpos);
+        let aln = align(&matches[best_st..best_en+1], &seq, rid, &finder.sequences()[(rid/2) as usize].seq(), args.k);
         report(&record, &finder.sequences()[(rid/2) as usize], &matches[best_st], &matches[best_en], best_en-best_st+1, rid&1==1, args.k, &aln);
       }
     }
@@ -260,14 +261,14 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
   draw_dp(dp);
 }
 
-fn align(matches:&Vec<KmerMatch>, query_seq:&[u8], rid:&u32, target_seq:&[u8], k:usize) -> Alignment {
+fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:usize) -> Alignment {
   let rev = rid&1 == 1;
 
   // this is a vector of the AlignmentOperation enum: Match, Subst, Ins, Del
   // initialize to a reasonably expected capacity for long read alignment:
   //   length of query string + 20%
   // this doesn't take into account extra alignment 5' and 3' of the terminal k-mer matches
-  let max_query_len = if rev {matches[0].qpos - matches[matches.len()-1].qpos} else {matches[matches.len()-1].qpos - matches[0].qpos};
+  let max_query_len = matches[matches.len()-1].qpos - matches[0].qpos;
   let mut path:Vec<AlignmentOperation> = Vec::with_capacity((max_query_len as f32 * 1.2) as usize);
   let mut score:i32 = 0;
 
@@ -290,12 +291,10 @@ fn align(matches:&Vec<KmerMatch>, query_seq:&[u8], rid:&u32, target_seq:&[u8], k
     let gap_extend:i32 = -1;
     let mut aligner = Aligner::with_capacity(qdiff as usize - k, tdiff as usize - k, gap_open, gap_extend, &score_func);
     let alignment = if !rev {
-      let qsub = &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize];
-      let tsub = &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize];
-      debug!("Aligning '{:?}' to '{:?}'", &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
+      debug!("Aligning query {}-{} to target {}-{}: '{:?}' to '{:?}'", matches[i-1].qpos, matches[i].qpos, matches[i-1].tpos, matches[i].tpos, &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
       aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
     } else {
-      debug!("Aligning '{:?}' to '{:?}'", &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
+      debug!("Aligning query {}-{} to target REVERSE {}-{}: '{:?}' to '{:?}'", matches[i-1].qpos, matches[i].qpos, matches[i-1].tpos, matches[i].tpos, &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
       aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
     };
     path.extend(alignment.operations);
