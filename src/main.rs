@@ -47,6 +47,7 @@ fn main() {
     max_abs_distance: 20, // 20 nt offset allowed before offset variance kicks in
     min_aln_len: 100, // minimum reported alignment path, bp
     rep_limit: 1000, // maximum occurrences of a single k-mer before it's considered repetitive and ignored
+    dp_block_size: 1000, // bin size for dot plot
     bwt:false};
   let mut arg_iter = env::args();
   arg_iter.next(); // get rid of the command
@@ -86,6 +87,10 @@ fn main() {
           Ok(n) => args.rep_limit = n,
           Err(e) => help_and_fail(format!("'{}' requires a positive integer value, got {}", arg, val)),
         }; },
+        "dp-block" => { let val = arg_iter.next().unwrap_or(String::new()); match val.parse::<usize>() {
+          Ok(n) => args.dp_block_size = n,
+          Err(e) => help_and_fail(format!("'{}' requires a positive integer value, got {}", arg, val)),
+        }; },
         "bwt" => { args.bwt = true; },
         _ => { help_and_fail(format!("Unknown argument '{}'", arg)); }
       }
@@ -120,6 +125,10 @@ fn main() {
           Ok(n) => args.rep_limit = n,
           Err(e) => help_and_fail(format!("'{}' requires a positive integer value, got {}", arg, val)),
         }; },
+        "d" => { let val = arg_iter.next().unwrap_or(String::new()); match val.parse::<usize>() {
+          Ok(n) => args.dp_block_size = n,
+          Err(e) => help_and_fail(format!("'{}' requires a positive integer value, got {}", arg, val)),
+        }; },
         _ => { help_and_fail(format!("Unknown argument '{}'", arg)); }
       }
     } else {
@@ -136,8 +145,6 @@ fn main() {
   if positional < 2 {
     help_and_fail("Not enough positional arguments".to_string());
   }
-
-  //debug!("{:?}", args);
 
 
   let t_0:u64 = time::precise_time_ns();
@@ -182,7 +189,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
   // a 2d matrix for dots for every combination of query and target, hence 4D
   let mut dp = DotPlot{matrix: Vec::with_capacity(finder.sequences().len())};
   dp.matrix.resize(finder.sequences().len(), Vec::new()); // this actually fills it with 0s
-  let dp_block_size = 1000;
+  let dp_block_size = args.dp_block_size;
 
   let mut r = 0; // read counter
   for record in reader.records() {
@@ -211,7 +218,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
 
       // fill dotplot
       for i in 0..matches.len() {
-        dp.matrix[(rid/2) as usize][r as usize][(if rid&1==1 {matches[i].tpos} else {finder.sequences()[(rid/2) as usize].seq().len() as u32 - (matches[i].tpos + args.k as u32)}) as usize / dp_block_size][matches[i].qpos as usize/dp_block_size] += 1;
+        dp.matrix[(rid/2) as usize][r as usize][(if rid&1==0 {matches[i].tpos} else {finder.sequences()[(rid/2) as usize].seq().len() as u32 - (matches[i].tpos + args.k as u32)}) as usize / dp_block_size][matches[i].qpos as usize/dp_block_size] += 1;
       }
 
       //matches.sort_by(|a, b| a.tpos.cmp(&b.tpos)); // sort by target position
@@ -229,11 +236,8 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
       let mut best_en = 0;
       for i in 1..matches.len() {
         // both must necessarily be sorted since query positions were already sorted and we got the LIS of target positions
-        //let qdiff = if matches[i].qpos > matches[i-1].qpos {matches[i].qpos - matches[i-1].qpos} else {matches[i-1].qpos - matches[i].qpos};
         let qdiff = matches[i].qpos - matches[i-1].qpos;
-        //let tdiff = if matches[i].tpos > matches[i-1].tpos {matches[i].tpos - matches[i-1].tpos} else {matches[i-1].tpos - matches[i].tpos};
         let tdiff = matches[i].tpos - matches[i-1].tpos;
-        debug!("matches {},{} -> {},{} -- qdiff: {}, tdiff: {}", matches[i-1].qpos, matches[i-1].tpos, matches[i].qpos, matches[i].tpos, qdiff, tdiff);
         if (if qdiff > tdiff {qdiff - tdiff} else {tdiff - qdiff}) > args.max_abs_distance
           && (tdiff as f32 > qdiff as f32 * (1.0 + args.max_offset_variance) || qdiff as f32 > tdiff as f32 * (1.0 + args.max_offset_variance)) {
           if i-m_start > best_en-best_st+1 {
@@ -250,7 +254,6 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
 
 
       if best_en-best_st+1 >= args.min_ordered_matches {
-        //debug!("Matches: {:?}", matches[best_st..best_en+1]);
         debug!("  hit ref {} ({}) {} times at q{}-{}, t{}-{}", rid/2, rid&1, best_en-best_st+1, matches[best_st].qpos, matches[best_en].qpos, matches[best_st].tpos, matches[best_en].tpos);
         let aln = align(&matches[best_st..best_en+1], &seq, rid, &finder.sequences()[(rid/2) as usize].seq(), args.k);
         report(&record, &finder.sequences()[(rid/2) as usize], &matches[best_st], &matches[best_en], best_en-best_st+1, rid&1==1, args.k, &aln);
@@ -291,10 +294,8 @@ fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:us
     let gap_extend:i32 = -1;
     let mut aligner = Aligner::with_capacity(qdiff as usize - k, tdiff as usize - k, gap_open, gap_extend, &score_func);
     let alignment = if !rev {
-      debug!("Aligning query {}-{} to target {}-{}: '{:?}' to '{:?}'", matches[i-1].qpos, matches[i].qpos, matches[i-1].tpos, matches[i].tpos, &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
       aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
     } else {
-      debug!("Aligning query {}-{} to target REVERSE {}-{}: '{:?}' to '{:?}'", matches[i-1].qpos, matches[i].qpos, matches[i-1].tpos, matches[i].tpos, &query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize]);
       aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
     };
     path.extend(alignment.operations);

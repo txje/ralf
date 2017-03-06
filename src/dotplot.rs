@@ -24,12 +24,10 @@ pub fn draw_dp(dp:DotPlot) {
     query_pts += dp.matrix[0][i][0].len();
   }
 
-  debug!("{} target blocks, {} query blocks, {} total target size, {} total query size", target_blocks, query_blocks, target_pts, query_pts);
-
   let imgx:u32 = ((target_blocks-1) * gap + target_pts) as u32;
   let imgy:u32 = ((query_blocks-1) * gap + query_pts) as u32;
 
-  debug!("image size: {}w x {}h", imgx, imgy);
+  debug!("Drawing dotplot -- image size: {}w x {}h", imgx, imgy);
 
   // Create a new ImgBuf with width: imgx and height: imgy
   let mut im:image::DynamicImage = image::DynamicImage::new_rgb8(imgx, imgy);
