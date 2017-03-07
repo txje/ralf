@@ -276,10 +276,12 @@ fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:us
   let mut score:i32 = 0;
 
   // first k-mer match
+  /*
   for _ in 0..k {
     path.push(Match);
   }
   score += k as i32;
+  */
 
   let mut m_start:usize = 0;
 
@@ -287,26 +289,34 @@ fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:us
   for i in 1..matches.len() {
     let qdiff = matches[i].qpos - matches[i-1].qpos;
     let tdiff = matches[i].tpos - matches[i-1].tpos;
+    // qdiff must be at least k apart - there is no such requirement for tdiff, so we'll align including the proximal k-mer match
 
     // lambda scoring function: 1 if match, -1 if mismatch
     let score_func = |a: u8, b: u8| if a == b {1i32} else {-1i32};
     let gap_open:i32 = -1;
     let gap_extend:i32 = -1;
-    let mut aligner = Aligner::with_capacity(qdiff as usize - k, tdiff as usize - k, gap_open, gap_extend, &score_func);
+    let mut aligner = Aligner::with_capacity(qdiff as usize, tdiff as usize, gap_open, gap_extend, &score_func);
     let alignment = if !rev {
-      aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
+      aligner.global(&query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize])
     } else {
-      aligner.global(&query_seq[matches[i-1].qpos as usize+k..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize+k..matches[i].tpos as usize])
+      aligner.global(&query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize..matches[i].tpos as usize])
     };
     path.extend(alignment.operations);
     score += alignment.score;
 
     // k-mer match
+    /*
     for _ in 0..k {
       path.push(Match);
     }
     score += k as i32;
+    */
   }
+  // last k-mer match
+  for _ in 0..k {
+    path.push(Match);
+  }
+  score += k as i32;
 
   let qalnlen = matches[matches.len()-1].qpos as usize - matches[0].qpos as usize + k;
   let talnlen = matches[matches.len()-1].tpos as usize - matches[0].tpos as usize + k;
