@@ -16,8 +16,10 @@ mod seqhash;
 use seqhash::SeqHash;
 mod util;
 use util::{Args, help_and_fail, bwt_alphabet};
+/*
 mod dotplot;
 use dotplot::{DotPlot, draw_dp};
+*/
 
 use std::vec::Vec;
 use std::env;
@@ -187,9 +189,11 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
   let reader = fasta::Reader::from_file(read_fa).unwrap();
 
   // a 2d matrix for dots for every combination of query and target, hence 4D
+  /*
   let mut dp = DotPlot{matrix: Vec::with_capacity(finder.sequences().len())};
   dp.matrix.resize(finder.sequences().len(), Vec::new()); // this actually fills it with 0s
   let dp_block_size = args.dp_block_size;
+  */
 
   let mut r = 0; // read counter
   for record in reader.records() {
@@ -198,6 +202,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
     let seq = record.seq();
 
     // create each dp matrix
+    /*
     for i in 0..dp.matrix.len() {
       dp.matrix[i].push(Vec::with_capacity(finder.sequences()[i].seq().len()/dp_block_size + 1));
       dp.matrix[i][r].resize(finder.sequences()[i].seq().len()/dp_block_size + 1, Vec::new()); // this actually fills it with 0s
@@ -205,6 +210,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
         dp.matrix[i][r][j].resize(seq.len()/dp_block_size + 1, 0); // this actually fills it with 0s
       }
     }
+    */
 
     debug!("Read {} ({} bp)", record.id().unwrap(), seq.len());
 
@@ -217,9 +223,11 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
     for (rid, matches) in hit_hash.iter_mut() {
 
       // fill dotplot
+      /*
       for i in 0..matches.len() {
         dp.matrix[(rid/2) as usize][r as usize][(if rid&1==0 {matches[i].tpos} else {finder.sequences()[(rid/2) as usize].seq().len() as u32 - (matches[i].tpos + args.k as u32)}) as usize / dp_block_size][matches[i].qpos as usize/dp_block_size] += 1;
       }
+      */
 
       //matches.sort_by(|a, b| a.tpos.cmp(&b.tpos)); // sort by target position
       let mut matches = lis(&matches);
@@ -261,7 +269,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
     }
     r += 1; // read counter
   }
-  draw_dp(dp);
+  //draw_dp(dp);
 }
 
 fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:usize) -> Alignment {
@@ -275,13 +283,6 @@ fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:us
   let mut path:Vec<AlignmentOperation> = Vec::with_capacity((max_query_len as f32 * 1.2) as usize);
   let mut score:i32 = 0;
 
-  // first k-mer match
-  /*
-  for _ in 0..k {
-    path.push(Match);
-  }
-  score += k as i32;
-  */
 
   let mut m_start:usize = 0;
 
@@ -291,26 +292,22 @@ fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:us
     let tdiff = matches[i].tpos - matches[i-1].tpos;
     // qdiff must be at least k apart - there is no such requirement for tdiff, so we'll align including the proximal k-mer match
 
+    //debug!("match {} to {}, query {}-{}, target {}-{} {}, query: {:?}, target: {:?}", i-1, i, matches[i-1].qpos, matches[i].qpos, matches[i-1].tpos, matches[i].tpos, (if(rev){"REV"}else{" "}), &query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize]);
+
     // lambda scoring function: 1 if match, -1 if mismatch
     let score_func = |a: u8, b: u8| if a == b {1i32} else {-1i32};
     let gap_open:i32 = -1;
     let gap_extend:i32 = -1;
     let mut aligner = Aligner::with_capacity(qdiff as usize, tdiff as usize, gap_open, gap_extend, &score_func);
+
     let alignment = if !rev {
       aligner.global(&query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize])
     } else {
-      aligner.global(&query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &revcomp(target_seq)[matches[i-1].tpos as usize..matches[i].tpos as usize])
+      aligner.global(&query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &revcomp(&target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize]))
     };
+
     path.extend(alignment.operations);
     score += alignment.score;
-
-    // k-mer match
-    /*
-    for _ in 0..k {
-      path.push(Match);
-    }
-    score += k as i32;
-    */
   }
   // last k-mer match
   for _ in 0..k {
