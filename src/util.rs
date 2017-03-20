@@ -21,6 +21,7 @@ pub struct Args {
   pub max_abs_distance: u32,
   pub min_aln_len: usize,
   pub rep_limit: usize,
+  pub acc_threshold: f32,
   pub dp_block_size: usize,
   pub bwt: bool
 }
@@ -40,6 +41,7 @@ Options:
   -n --max-abs-distance      Maximum absolute difference between adjacent hits before proportional gap kicks in (default: 20)
   -l --min-aln-len           Minimum reported alignment length (default: 100)
   -r --rep-limit             Maximum occurrences of a k-mer before it's considered repetitive and ignored (default: 1000)
+  -a --acc-threshold         Minimum end-to-end accuracy to report an alignment (default: 0.7)
   -d --dp-block              Block size for dot plot (default: 1000)
   --bwt                      Use BWT and FM-index for lookup (defaults to using a HashMap)
 ";

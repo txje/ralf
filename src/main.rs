@@ -49,6 +49,7 @@ fn main() {
     max_abs_distance: 20, // 20 nt offset allowed before offset variance kicks in
     min_aln_len: 100, // minimum reported alignment path, bp
     rep_limit: 1000, // maximum occurrences of a single k-mer before it's considered repetitive and ignored
+    acc_threshold: 0.7, // minimum end-to-end accuracy to report an alignment
     dp_block_size: 1000, // bin size for dot plot
     bwt:false};
   let mut arg_iter = env::args();
@@ -89,6 +90,10 @@ fn main() {
           Ok(n) => args.rep_limit = n,
           Err(e) => help_and_fail(format!("'{}' requires a positive integer value, got {}", arg, val)),
         }; },
+        "acc-threshold" => { let val = arg_iter.next().unwrap_or(String::new()); match val.parse::<f32>() {
+          Ok(n) => args.acc_threshold = n,
+          Err(e) => help_and_fail(format!("'{}' requires a decimal value, got {}", arg, val)),
+        }; },
         "dp-block" => { let val = arg_iter.next().unwrap_or(String::new()); match val.parse::<usize>() {
           Ok(n) => args.dp_block_size = n,
           Err(e) => help_and_fail(format!("'{}' requires a positive integer value, got {}", arg, val)),
@@ -126,6 +131,10 @@ fn main() {
         "r" => { let val = arg_iter.next().unwrap_or(String::new()); match val.parse::<usize>() {
           Ok(n) => args.rep_limit = n,
           Err(e) => help_and_fail(format!("'{}' requires a positive integer value, got {}", arg, val)),
+        }; },
+        "a" => { let val = arg_iter.next().unwrap_or(String::new()); match val.parse::<f32>() {
+          Ok(n) => args.acc_threshold = n,
+          Err(e) => help_and_fail(format!("'{}' requires a decimal value, got {}", arg, val)),
         }; },
         "d" => { let val = arg_iter.next().unwrap_or(String::new()); match val.parse::<usize>() {
           Ok(n) => args.dp_block_size = n,
@@ -262,9 +271,16 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
 
 
       if best_en-best_st+1 >= args.min_ordered_matches {
-        debug!("  hit ref {} ({}) {} times at q{}-{}, t{}-{}", rid/2, rid&1, best_en-best_st+1, matches[best_st].qpos, matches[best_en].qpos, matches[best_st].tpos, matches[best_en].tpos);
         let aln = align(&matches[best_st..best_en+1], &seq, rid, &finder.sequences()[(rid/2) as usize].seq(), args.k);
-        report(&record, &finder.sequences()[(rid/2) as usize], &matches[best_st], &matches[best_en], best_en-best_st+1, rid&1==1, args.k, &aln);
+        let n_match = aln.operations.iter().filter(|a| **a == Match).count();
+        let n_mis = aln.operations.iter().filter(|a| **a == Subst).count();
+        let n_del = aln.operations.iter().filter(|a| **a == Del).count();
+        let n_ins = aln.operations.iter().filter(|a| **a == Ins).count();
+        let acc = n_match as f32 / aln.operations.len() as f32;
+        if acc >= args.acc_threshold {
+          debug!("  k-mer hits to ref {} ({}): {} from q{}-{} and t{}-{}, dp accuracy: {}", rid/2, rid&1, best_en-best_st+1, matches[best_st].qpos, matches[best_en].qpos, matches[best_st].tpos, matches[best_en].tpos, acc);
+          report(&record, &finder.sequences()[(rid/2) as usize], &matches[best_st], &matches[best_en], best_en-best_st+1, rid&1==1, args.k, &aln);
+        }
       }
     }
     r += 1; // read counter
@@ -334,6 +350,13 @@ fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, 
   // it should be returning a reference to a slice of the underlying string, so takes O(1) time
   let tlen = target.seq().len();
 
+  // compute simple stats
+  let n_match = aln.operations.iter().filter(|a| **a == Match).count();
+  let n_mis = aln.operations.iter().filter(|a| **a == Subst).count();
+  let n_del = aln.operations.iter().filter(|a| **a == Del).count();
+  let n_ins = aln.operations.iter().filter(|a| **a == Ins).count();
+  let acc = n_match as f32 / aln.operations.len() as f32;
+
   print!("{} ", query.id().unwrap());
   print!("{} ", query.seq().len());
   print!("{} ", first_match.qpos);
@@ -349,20 +372,6 @@ fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, 
 
   print!("{} ", nmatches);
 
-  // compute simple stats
-  let mut n_match:usize = 0;
-  let mut n_mis:usize = 0;
-  let mut n_del:usize = 0;
-  let mut n_ins:usize = 0;
-  for op in &aln.operations {
-    match op {
-      &Match => {n_match+=1;},
-      &Subst => {n_mis+=1;},
-      &Del => {n_del+=1;},
-      &Ins => {n_ins+=1;}
-    }
-  }
-  let acc = n_match as f32 / aln.operations.len() as f32;
   print!("{} {} {} {} {:.4} ", n_match, n_mis, n_del, n_ins, acc);
 
   let qseq = &query.seq()[first_match.qpos as usize .. last_match.qpos as usize + k];
