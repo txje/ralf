@@ -48,10 +48,12 @@ impl SeqHash {
 
         //debug!("Loading reference {}: {} ({}bp)", rid, record.id().unwrap(), seq.len());
 
-        if alphabet.is_word(seq) {
-          sh.kmer_pack_hash(&seq, rid, slen);
-        } else {
+        if !alphabet.is_word(seq) {
           info!("Reference sequence {} contains something that is not in (A,C,G,T,N). The *entire* sequence is being ignored.", record.id().unwrap());
+        } else if slen < k {
+          info!("Reference sequence {} is <{} bp, it cannot be hashed and will be ignored.", record.id().unwrap(), k);
+        } else {
+          sh.kmer_pack_hash(&seq, rid, slen);
         }
       }
       sh.sequences.push(record);
