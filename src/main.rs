@@ -290,6 +290,7 @@ fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::
 
 fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:usize) -> Alignment {
   let rev = rid&1 == 1;
+  let tlen = target_seq.len();
 
   // this is a vector of the AlignmentOperation enum: Match, Subst, Ins, Del
   // initialize to a reasonably expected capacity for long read alignment:
@@ -308,7 +309,7 @@ fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:us
     let tdiff = matches[i].tpos - matches[i-1].tpos;
     // qdiff must be at least k apart - there is no such requirement for tdiff, so we'll align including the proximal k-mer match
 
-    //debug!("match {} to {}, query {}-{}, target {}-{} {}, query: {:?}, target: {:?}", i-1, i, matches[i-1].qpos, matches[i].qpos, matches[i-1].tpos, matches[i].tpos, (if(rev){"REV"}else{" "}), &query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize]);
+    //debug!("match {} to {}, query {}-{}, target {}-{} {}, query: {:?}, target: {:?}", i-1, i, matches[i-1].qpos, matches[i].qpos, matches[i-1].tpos, matches[i].tpos, (if rev {"REV"}else{" "}), &query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize]);
 
     // lambda scoring function: 1 if match, -1 if mismatch
     let score_func = |a: u8, b: u8| if a == b {1i32} else {-1i32};
@@ -316,11 +317,26 @@ fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:us
     let gap_extend:i32 = -1;
     let mut aligner = Aligner::with_capacity(qdiff as usize, tdiff as usize, gap_open, gap_extend, &score_func);
 
+    // target positions are relative to reverse strand, so we have to invert them, take a slice, then revcomp it
+    let qseq = &query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize];
     let alignment = if !rev {
-      aligner.global(&query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize])
+       aligner.global(qseq, &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize])
     } else {
-      aligner.global(&query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize], &revcomp(&target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize]))
+      aligner.global(qseq, &revcomp(&target_seq[(tlen - matches[i].tpos as usize)..(tlen - matches[i-1].tpos as usize)]))
     };
+
+    /*
+    let qseq = &query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize];
+    let tseq = if !rev {
+      &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize]
+    } else {
+      // target positions are relative to reverse strand, so we have to invert them, take a slice, then revcomp it
+      &revcomp(&target_seq[(tlen - matches[i].tpos as usize - k)..(tlen - matches[i-1].tpos as usize - k)])
+    };
+    debug!("query: {:?}", qseq);
+    debug!("target: {:?}", tseq);
+    let alignment = aligner.global(qseq, tseq);
+    */
 
     path.extend(alignment.operations);
     score += alignment.score;
