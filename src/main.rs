@@ -320,23 +320,10 @@ fn align(matches:&[KmerMatch], query_seq:&[u8], rid:&u32, target_seq:&[u8], k:us
     // target positions are relative to reverse strand, so we have to invert them, take a slice, then revcomp it
     let qseq = &query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize];
     let alignment = if !rev {
-       aligner.global(qseq, &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize])
+      aligner.global(qseq, &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize])
     } else {
       aligner.global(qseq, &revcomp(&target_seq[(tlen - matches[i].tpos as usize)..(tlen - matches[i-1].tpos as usize)]))
     };
-
-    /*
-    let qseq = &query_seq[matches[i-1].qpos as usize..matches[i].qpos as usize];
-    let tseq = if !rev {
-      &target_seq[matches[i-1].tpos as usize..matches[i].tpos as usize]
-    } else {
-      // target positions are relative to reverse strand, so we have to invert them, take a slice, then revcomp it
-      &revcomp(&target_seq[(tlen - matches[i].tpos as usize - k)..(tlen - matches[i-1].tpos as usize - k)])
-    };
-    debug!("query: {:?}", qseq);
-    debug!("target: {:?}", tseq);
-    let alignment = aligner.global(qseq, tseq);
-    */
 
     path.extend(alignment.operations);
     score += alignment.score;
@@ -392,7 +379,7 @@ fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, 
 
   let qseq = &query.seq()[first_match.qpos as usize .. last_match.qpos as usize + k];
   let tseq = &target.seq()[first_match.tpos as usize .. last_match.tpos as usize + k];
-  let rv_tseq = &revcomp(tseq);
+  let rv_tseq = &revcomp(&target.seq()[tlen - last_match.tpos as usize - k .. tlen - first_match.tpos as usize]);
   let pretty_fmt = aln.pretty(qseq, if rev {rv_tseq} else {tseq}); // pretty() reports a string with 3 rows: query, alignment, target
   let mut parts = pretty_fmt.split("\n");
   print!("{} ", parts.next().unwrap());
