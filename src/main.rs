@@ -195,7 +195,7 @@ fn main() {
 
 fn ovl_reads(read_fa:&str, finder:&Overlapper, args:&Args, alphabet:&alphabets::Alphabet) {
 
-  let reader = fasta::Reader::from_file(read_fa).unwrap();
+  let reader = fasta::Reader::from_file(read_fa).expect(&format!("Input file '{}' does not exist!", read_fa));
 
   // a 2d matrix for dots for every combination of query and target, hence 4D
   /*
