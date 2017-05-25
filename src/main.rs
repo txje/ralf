@@ -368,9 +368,9 @@ fn report (query:&fasta::Record, target:&fasta::Record, first_match:&KmerMatch, 
 
   print!("{} ", target.id().unwrap());
   print!("{} ", tlen);
-  // reported position will be relative to the appropriate strand
-  print!("{} ", if !rev {first_match.tpos} else {tlen as u32 - (first_match.tpos + k as u32)});
-  print!("{} ", (if !rev {last_match.tpos + k as u32 - 1} else {tlen as u32 - 1 - last_match.tpos})); // right now, end position is INCLUSIVE
+  // reported positions will be relative to the canonical (fw) strand
+  print!("{} ", if !rev {first_match.tpos} else {tlen as u32 - (last_match.tpos + k as u32)});
+  print!("{} ", (if !rev {last_match.tpos + k as u32} else {tlen as u32 - first_match.tpos})); // end position is EXCLUSIVE
   print!("{} ", if !rev {0} else {1});
 
   print!("{} ", nmatches);
